@@ -1,0 +1,290 @@
+<?php
+/**
+ * Funciones internas del plugin local_audit.
+ */
+
+defined('MOODLE_INTERNAL') || die();
+
+/**
+ * Devuelve las entregas de tipo assign filtradas por usuario y/o curso.
+ * Incluye tanto usuarios activos como suspendidos; excluye eliminados.
+ *
+ * @param int $userid   0 = sin filtro por usuario.
+ * @param int $courseid 0 = sin filtro por curso.
+ * @return array Filas de resultado (stdClass).
+ */
+function local_audit_get_submissions(int $userid, int $courseid): array {
+    global $DB;
+
+    $conditions = ['s.latest = 1', 'u.deleted = 0'];
+    $params     = [];
+
+    if ($userid > 0) {
+        $conditions[] = 's.userid = :userid';
+        $params['userid'] = $userid;
+    }
+    if ($courseid > 0) {
+        $conditions[] = 'a.course = :courseid';
+        $params['courseid'] = $courseid;
+    }
+
+    $where = implode(' AND ', $conditions);
+
+    $sql = "SELECT s.id          AS subid,
+                   s.userid,
+                   s.assignment  AS assignid,
+                   s.status,
+                   s.timecreated,
+                   s.timemodified,
+                   s.attemptnumber,
+                   u.firstname,
+                   u.lastname,
+                   u.firstnamephonetic,
+                   u.lastnamephonetic,
+                   u.middlename,
+                   u.alternatename,
+                   u.username,
+                   u.email,
+                   u.suspended,
+                   a.name        AS assignname,
+                   a.course      AS courseid,
+                   c.fullname    AS coursename,
+                   c.shortname   AS courseshortname,
+                   cm.id         AS cmid
+              FROM {assign_submission} s
+              JOIN {user}             u  ON  u.id       = s.userid
+              JOIN {assign}           a  ON  a.id       = s.assignment
+              JOIN {course}           c  ON  c.id       = a.course
+              JOIN {course_modules}   cm ON  cm.course  = a.course
+                                         AND cm.instance = a.id
+                                         AND cm.module   = (SELECT id FROM {modules} WHERE name = 'assign')
+             WHERE {$where}
+          ORDER BY c.fullname, a.name, u.lastname, u.firstname";
+
+    return $DB->get_records_sql($sql, $params);
+}
+
+/**
+ * Devuelve una etiqueta HTML con el estado de una entrega.
+ *
+ * @param string|null $status Valor del campo mdl_assign_submission.status.
+ * @return string HTML.
+ */
+function local_audit_status_label(?string $status): string {
+    switch ($status) {
+        case 'submitted':
+            return html_writer::tag('span',
+                get_string('statussubmitted', 'local_audit'),
+                ['class' => 'badge badge-success bg-success text-white']);
+        case 'draft':
+            return html_writer::tag('span',
+                get_string('statusdraft', 'local_audit'),
+                ['class' => 'badge badge-warning bg-warning text-dark']);
+        case 'reopened':
+            return html_writer::tag('span',
+                get_string('statusreopened', 'local_audit'),
+                ['class' => 'badge badge-info bg-info text-white']);
+        default:
+            return html_writer::tag('span',
+                get_string('statusnew', 'local_audit'),
+                ['class' => 'badge badge-secondary bg-secondary text-white']);
+    }
+}
+
+/**
+ * Devuelve la etiqueta de texto plano (para CSV) del estado de una entrega.
+ *
+ * @param string|null $status
+ * @return string
+ */
+function local_audit_status_text(?string $status): string {
+    switch ($status) {
+        case 'submitted': return get_string('statussubmitted', 'local_audit');
+        case 'draft':     return get_string('statusdraft',     'local_audit');
+        case 'reopened':  return get_string('statusreopened',  'local_audit');
+        default:          return get_string('statusnew',       'local_audit');
+    }
+}
+
+// ── Quiz ──────────────────────────────────────────────────────────────────
+
+/**
+ * Devuelve los intentos de quiz filtrados por usuario y/o curso.
+ * Incluye usuarios suspendidos; excluye eliminados.
+ *
+ * @param int $userid
+ * @param int $courseid
+ * @return array
+ */
+function local_audit_get_quiz_attempts(int $userid, int $courseid): array {
+    global $DB;
+
+    $conditions = ['u.deleted = 0'];
+    $params     = [];
+
+    if ($userid > 0) {
+        $conditions[] = 'qa.userid = :userid';
+        $params['userid'] = $userid;
+    }
+    if ($courseid > 0) {
+        $conditions[] = 'q.course = :courseid';
+        $params['courseid'] = $courseid;
+    }
+
+    $where = implode(' AND ', $conditions);
+
+    $sql = "SELECT qa.id           AS attemptid,
+                   qa.userid,
+                   qa.attempt      AS attemptnum,
+                   qa.state,
+                   qa.timestart,
+                   qa.timefinish,
+                   qa.sumgrades,
+                   q.sumgrades     AS maxsumgrades,
+                   q.grade         AS maxgrade,
+                   u.firstname,
+                   u.lastname,
+                   u.firstnamephonetic,
+                   u.lastnamephonetic,
+                   u.middlename,
+                   u.alternatename,
+                   u.username,
+                   u.email,
+                   u.suspended,
+                   q.id            AS quizid,
+                   q.name          AS quizname,
+                   q.course        AS courseid,
+                   c.fullname      AS coursename,
+                   c.shortname     AS courseshortname,
+                   cm.id           AS cmid
+              FROM {quiz_attempts} qa
+              JOIN {user}           u  ON  u.id       = qa.userid
+              JOIN {quiz}           q  ON  q.id       = qa.quiz
+              JOIN {course}         c  ON  c.id       = q.course
+              JOIN {course_modules} cm ON  cm.course  = q.course
+                                      AND  cm.instance = q.id
+                                      AND  cm.module   = (SELECT id FROM {modules} WHERE name = 'quiz')
+             WHERE {$where}
+          ORDER BY c.fullname, q.name, u.lastname, u.firstname, qa.attempt";
+
+    return $DB->get_records_sql($sql, $params);
+}
+
+/**
+ * Etiqueta HTML para el estado de un intento de quiz.
+ *
+ * @param string|null $state
+ * @return string HTML
+ */
+function local_audit_quiz_state_label(?string $state): string {
+    switch ($state) {
+        case 'finished':
+            return html_writer::tag('span',
+                get_string('quizstatefinished', 'local_audit'),
+                ['class' => 'badge badge-success bg-success text-white']);
+        case 'inprogress':
+            return html_writer::tag('span',
+                get_string('quizstateinprogress', 'local_audit'),
+                ['class' => 'badge badge-warning bg-warning text-dark']);
+        case 'abandoned':
+            return html_writer::tag('span',
+                get_string('quizstateabandoned', 'local_audit'),
+                ['class' => 'badge badge-danger bg-danger text-white']);
+        default:
+            return html_writer::tag('span',
+                $state ?? '—',
+                ['class' => 'badge badge-secondary bg-secondary text-white']);
+    }
+}
+
+/**
+ * Etiqueta de texto plano para el estado de un intento de quiz (para CSV).
+ *
+ * @param string|null $state
+ * @return string
+ */
+function local_audit_quiz_state_text(?string $state): string {
+    switch ($state) {
+        case 'finished':    return get_string('quizstatefinished',    'local_audit');
+        case 'inprogress':  return get_string('quizstateinprogress',  'local_audit');
+        case 'abandoned':   return get_string('quizstateabandoned',   'local_audit');
+        default:            return $state ?? '';
+    }
+}
+
+/**
+ * Formatea la puntuación de un intento (sumgrades / maxsumgrades).
+ *
+ * @param stdClass $attempt
+ * @return string
+ */
+function local_audit_quiz_grade(stdClass $attempt): string {
+    if ($attempt->maxsumgrades == 0 || $attempt->sumgrades === null) {
+        return '—';
+    }
+    return round($attempt->sumgrades, 2) . ' / ' . round($attempt->maxsumgrades, 2);
+}
+
+// ── Foros ─────────────────────────────────────────────────────────────────
+
+/**
+ * Devuelve los posts de foro filtrados por usuario y/o curso.
+ * Incluye usuarios suspendidos; excluye eliminados.
+ *
+ * @param int $userid
+ * @param int $courseid
+ * @return array
+ */
+function local_audit_get_forum_posts(int $userid, int $courseid): array {
+    global $DB;
+
+    $conditions = ['u.deleted = 0', 'fp.deleted = 0'];
+    $params     = [];
+
+    if ($userid > 0) {
+        $conditions[] = 'fp.userid = :userid';
+        $params['userid'] = $userid;
+    }
+    if ($courseid > 0) {
+        $conditions[] = 'f.course = :courseid';
+        $params['courseid'] = $courseid;
+    }
+
+    $where = implode(' AND ', $conditions);
+
+    $sql = "SELECT fp.id           AS postid,
+                   fp.userid,
+                   fp.created,
+                   fp.modified,
+                   fp.subject      AS postsubject,
+                   fp.message,
+                   u.firstname,
+                   u.lastname,
+                   u.firstnamephonetic,
+                   u.lastnamephonetic,
+                   u.middlename,
+                   u.alternatename,
+                   u.username,
+                   u.email,
+                   u.suspended,
+                   fd.id           AS discussionid,
+                   fd.name         AS discussionname,
+                   f.id            AS forumid,
+                   f.name          AS forumname,
+                   f.course        AS courseid,
+                   c.fullname      AS coursename,
+                   c.shortname     AS courseshortname,
+                   cm.id           AS cmid
+              FROM {forum_posts}       fp
+              JOIN {user}              u  ON  u.id       = fp.userid
+              JOIN {forum_discussions} fd ON  fd.id      = fp.discussion
+              JOIN {forum}             f  ON  f.id       = fd.forum
+              JOIN {course}            c  ON  c.id       = f.course
+              JOIN {course_modules}    cm ON  cm.course  = f.course
+                                         AND  cm.instance = f.id
+                                         AND  cm.module   = (SELECT id FROM {modules} WHERE name = 'forum')
+             WHERE {$where}
+          ORDER BY c.fullname, f.name, fp.created DESC";
+
+    return $DB->get_records_sql($sql, $params);
+}
