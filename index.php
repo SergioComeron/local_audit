@@ -16,7 +16,7 @@ admin_externalpage_setup('local_audit');
 $userid   = optional_param('userid',   0, PARAM_INT);
 $courseid = optional_param('courseid', 0, PARAM_INT);
 $searched = optional_param('searched', 0, PARAM_INT);
-$tab      = optional_param('tab', 'assign', PARAM_ALPHA);
+$tab      = optional_param('tab', 'time', PARAM_ALPHA);
 $page     = optional_param('page',     0, PARAM_INT);
 $mintime  = optional_param('mintime',  0, PARAM_INT);
 $maxtime  = optional_param('maxtime',  0, PARAM_INT);
@@ -330,6 +330,11 @@ if ($searched) {
         // ── Pestañas ─────────────────────────────────────────────────────
         $tabs = [
             new tabobject(
+                'time',
+                new moodle_url('/local/audit/index.php', $urlparams + ['tab' => 'time']),
+                get_string('tabtime', 'local_audit')
+            ),
+            new tabobject(
                 'assign',
                 new moodle_url('/local/audit/index.php', $urlparams + ['tab' => 'assign']),
                 get_string('tabassign', 'local_audit') . ' (' . count($submissions) . ')'
@@ -343,11 +348,6 @@ if ($searched) {
                 'forum',
                 new moodle_url('/local/audit/index.php', $urlparams + ['tab' => 'forum']),
                 get_string('tabforum', 'local_audit') . ' (' . count($forumposts) . ')'
-            ),
-            new tabobject(
-                'time',
-                new moodle_url('/local/audit/index.php', $urlparams + ['tab' => 'time']),
-                get_string('tabtime', 'local_audit')
             ),
         ];
         echo $OUTPUT->tabtree($tabs, $tab);
