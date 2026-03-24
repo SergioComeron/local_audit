@@ -12,3 +12,12 @@ $functions = [
         'loginrequired' => true,
     ],
 ];
+
+$services = [
+    'Submission Audit API' => [
+        'shortname'       => 'local_audit',
+        'functions'       => ['local_audit_get_dedication'],
+        'restrictedusers' => 1,
+        'enabled'         => 1,
+    ],
+];
