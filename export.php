@@ -15,7 +15,7 @@ require_once($CFG->libdir . '/adminlib.php');
 require_once(__DIR__ . '/locallib.php');
 
 require_login();
-require_capability('moodle/site:config', context_system::instance());
+require_capability('local/audit:view', context_system::instance());
 
 $userid   = optional_param('userid',   0,        PARAM_INT);
 $courseid = optional_param('courseid', 0,        PARAM_INT);

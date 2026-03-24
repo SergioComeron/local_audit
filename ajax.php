@@ -14,7 +14,7 @@ define('AJAX_SCRIPT', true);
 require_once(__DIR__ . '/../../config.php');
 
 require_login();
-require_capability('moodle/site:config', context_system::instance());
+require_capability('local/audit:view', context_system::instance());
 
 $type   = required_param('type',   PARAM_ALPHA);
 $q      = optional_param('q',      '', PARAM_TEXT);

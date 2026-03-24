@@ -44,7 +44,7 @@ class get_dedication extends external_api {
 
         $context = \context_system::instance();
         self::validate_context($context);
-        require_capability('moodle/site:config', $context);
+        require_capability('local/audit:view', $context);
 
         // Resolver usuario.
         $user = $DB->get_record('user', ['username' => $params['username'], 'deleted' => 0]);

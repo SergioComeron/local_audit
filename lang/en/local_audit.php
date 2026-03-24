@@ -61,6 +61,7 @@ $string['noselection']        = 'No selection';
 $string['coursehelp']         = 'Select a student first to see their courses.';
 $string['filenotfound']       = 'File not found or access denied.';
 $string['shortname']          = 'Short name';
+$string['audit:view']         = 'View submission audit';
 $string['invaliduser']        = 'User not found.';
 $string['invalidcourse']      = 'Course not found.';
 $string['datefrom']           = 'From';
