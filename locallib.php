@@ -106,6 +106,84 @@ function local_audit_status_text(?string $status): string {
     }
 }
 
+// ── Tiempo (block_dedication) ─────────────────────────────────────────────
+
+/**
+ * Comprueba si el plugin block_dedication está instalado y disponible.
+ *
+ * @return bool
+ */
+function local_audit_dedication_available(): bool {
+    return class_exists('\\block_dedication\\lib\\utils');
+}
+
+/**
+ * Devuelve el tiempo estimado de un usuario por curso usando block_dedication.
+ *
+ * Si $courseid > 0 devuelve un único elemento con el detalle de sesiones.
+ * Si $courseid = 0 devuelve todos los cursos en los que el usuario está matriculado.
+ *
+ * @param int $userid   Obligatorio (> 0).
+ * @param int $courseid 0 = todos los cursos matriculados.
+ * @return array        Objetos con: courseid, coursename, shortname, timesecs,
+ *                      timeformatted, sessions (array de sesiones).
+ */
+function local_audit_get_dedication(int $userid, int $courseid, int $mintime = 0, int $maxtime = 0): array {
+    global $DB;
+
+    if (!local_audit_dedication_available()) {
+        return [];
+    }
+
+    if ($courseid > 0) {
+        $courses = $DB->get_records_sql(
+            "SELECT DISTINCT c.id, c.fullname, c.shortname, c.startdate
+               FROM {course} c
+               JOIN {enrol} e            ON e.courseid = c.id
+               JOIN {user_enrolments} ue ON ue.enrolid = e.id
+              WHERE ue.userid = :userid AND c.id = :courseid",
+            ['userid' => $userid, 'courseid' => $courseid]
+        );
+    } else {
+        $courses = $DB->get_records_sql(
+            "SELECT DISTINCT c.id, c.fullname, c.shortname, c.startdate
+               FROM {course} c
+               JOIN {enrol} e            ON e.courseid = c.id
+               JOIN {user_enrolments} ue ON ue.enrolid = e.id
+              WHERE ue.userid = :userid AND c.id <> 1
+           ORDER BY c.fullname",
+            ['userid' => $userid]
+        );
+    }
+
+    $user    = $DB->get_record('user', ['id' => $userid]);
+    $results = [];
+
+    foreach ($courses as $course) {
+        $manager  = new \block_dedication\lib\manager($course, $mintime ?: null, $maxtime ?: null);
+        $sessions = $manager->get_user_dedication($user, false);
+
+        $total = 0;
+        foreach ($sessions as $s) {
+            $total += $s->dedicationtime;
+        }
+
+        $results[] = (object)[
+            'courseid'      => $course->id,
+            'coursename'    => $course->fullname,
+            'shortname'     => $course->shortname,
+            'timesecs'      => $total,
+            'timeformatted' => \block_dedication\lib\utils::format_dedication($total),
+            'sessions'      => $sessions,
+        ];
+    }
+
+    // Ordenar por tiempo descendente.
+    usort($results, function ($a, $b) { return $b->timesecs - $a->timesecs; });
+
+    return $results;
+}
+
 // ── Quiz ──────────────────────────────────────────────────────────────────
 
 /**
