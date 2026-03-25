@@ -61,6 +61,7 @@ $string['noselection']        = 'No selection';
 $string['coursehelp']         = 'Select a student first to see their courses.';
 $string['filenotfound']       = 'File not found or access denied.';
 $string['shortname']          = 'Short name';
+$string['tabindividual']      = 'Individual';
 $string['tabgroup']           = 'Group';
 $string['cohort']             = 'Cohort';
 $string['selectcohort']       = 'Select a cohort...';
