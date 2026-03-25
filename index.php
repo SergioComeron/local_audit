@@ -296,6 +296,11 @@ if ($mode !== 'group') {
 }
 
 // ── Salida HTML ───────────────────────────────────────────────────────────
+// Forzar inicialización del tema ANTES de que header() cargue los bloques.
+// Sin esto, el hook before_footer_html_generation de block_ai_chat accede a
+// $PAGE->theme durante el footer, lo que dispara initialise_theme_and_output()
+// cuando los bloques ya están cargados y lanza una coding_exception.
+$PAGE->theme;
 echo $OUTPUT->header();
 echo $OUTPUT->heading(get_string('pluginname', 'local_audit'));
 
