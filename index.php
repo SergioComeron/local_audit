@@ -605,6 +605,55 @@ if ($searched) {
                             }
                             $stable->finish_output();
                         }
+
+                        // ── Sesiones Zoom (solo cuando hay un curso concreto) ─────
+                        if (local_audit_zoom_available()) {
+                            $zoom_sessions = local_audit_get_zoom_sessions($userid, $courseid, $mintime, $maxtime);
+                            if (!empty($zoom_sessions)) {
+                                echo html_writer::tag('h5',
+                                    get_string('zoomsessions', 'local_audit'),
+                                    ['class' => 'mt-4']);
+
+                                $ztable = new flexible_table('local-audit-zoom-' . $userid . '-' . $courseid);
+                                $ztable->define_columns(['zoomsubject', 'zoomteacher', 'sessionstart',
+                                                         'zoomattended', 'zoomlivetime', 'zoomrecordingtime']);
+                                $ztable->define_headers([
+                                    get_string('zoomsubject',       'local_audit'),
+                                    get_string('zoomteacher',       'local_audit'),
+                                    get_string('sessionstart',      'local_audit'),
+                                    get_string('zoomlive',          'local_audit'),
+                                    get_string('zoomlivetime',      'local_audit'),
+                                    get_string('zoomrecordingtime', 'local_audit'),
+                                ]);
+                                $ztable->define_baseurl(new moodle_url('/local/audit/index.php',
+                                    $urlparams + ['tab' => 'time', 'courseid' => $courseid]));
+                                $ztable->set_attribute('class', 'generaltable table-sm');
+                                $ztable->setup();
+
+                                foreach ($zoom_sessions as $zs) {
+                                    $attended = !empty($zs['asistioSesion'])
+                                        ? html_writer::tag('span', get_string('zoomattended',    'local_audit'),
+                                            ['class' => 'badge badge-success bg-success text-white'])
+                                        : html_writer::tag('span', get_string('zoomnotattended', 'local_audit'),
+                                            ['class' => 'badge badge-secondary bg-secondary text-white']);
+
+                                    $rectime = 0;
+                                    foreach ($zs['grabaciones'] ?? [] as $g) {
+                                        $rectime += $g['tiempoVisto'] ?? 0;
+                                    }
+
+                                    $ztable->add_data([
+                                        s($zs['asignatura'] ?? ''),
+                                        s($zs['docente']    ?? ''),
+                                        !empty($zs['fechaInicio']) ? userdate($zs['fechaInicio']) : '—',
+                                        $attended,
+                                        local_audit_format_secs((int)($zs['tiempoSesion'] ?? 0)),
+                                        $rectime > 0 ? local_audit_format_secs($rectime) : '—',
+                                    ]);
+                                }
+                                $ztable->finish_output();
+                            }
+                        }
                     } else {
                         // Vista resumen: un curso por fila.
                         $defaultsort = $tsort ?: 'totaltime';
@@ -783,20 +832,24 @@ if ($searched) {
                 'viewsessions'=> get_string('viewsessions', 'local_audit'),
                 'noresults'   => get_string('noresults',    'local_audit'),
                 'loading'     => get_string('loading',      'core'),
+                'zoomtime'    => get_string('zoomtime',     'local_audit'),
             ]);
+            $zoomavail = local_audit_zoom_available() ? 'true' : 'false';
 
             // Esqueleto de tabla — el cuerpo lo rellena JS.
+            // La columna Zoom se añade dinámicamente si el servidor la devuelve.
             echo html_writer::start_div('', ['id' => 'group-loading', 'class' => 'text-muted mb-2']);
             echo html_writer::tag('span', '', ['class' => 'spinner-border spinner-border-sm mr-1']);
             echo html_writer::tag('span', '', ['id' => 'group-progress']);
             echo html_writer::end_div();
 
-            echo html_writer::start_tag('table', ['class' => 'generaltable table-sm w-100']);
+            echo html_writer::start_tag('table', ['class' => 'generaltable table-sm w-100', 'id' => 'group-table']);
             echo html_writer::start_tag('thead');
-            echo html_writer::start_tag('tr');
+            echo html_writer::start_tag('tr', ['id' => 'group-thead-row']);
             foreach (['student', 'username', 'userstatus', 'course', 'totaltime', 'sessions'] as $col) {
                 echo html_writer::tag('th', get_string($col, 'local_audit'));
             }
+            // La cabecera Zoom se añade desde JS cuando se confirma disponibilidad.
             echo html_writer::end_tag('tr');
             echo html_writer::end_tag('thead');
             echo html_writer::start_tag('tbody', ['id' => 'group-tbody']);
@@ -816,10 +869,13 @@ if ($searched) {
     var wwwroot   = '{$wwwroot}';
     var sesskey   = '{$sesskey}';
     var strs      = {$jsstrs};
+    var zoomavail = {$zoomavail};
     var total     = userids.length;
     var done      = 0;
+    var zoomColAdded = false;
 
     var tbody    = document.getElementById('group-tbody');
+    var theadRow = document.getElementById('group-thead-row');
     var progress = document.getElementById('group-progress');
     var loading  = document.getElementById('group-loading');
 
@@ -829,6 +885,15 @@ if ($searched) {
         return String(str)
             .replace(/&/g, '&amp;').replace(/</g, '&lt;')
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function addZoomHeader() {
+        if (!zoomColAdded) {
+            zoomColAdded = true;
+            var th = document.createElement('th');
+            th.textContent = strs.zoomtime;
+            theadRow.appendChild(th);
+        }
     }
 
     function loadUser(userid) {
@@ -849,6 +914,9 @@ if ($searched) {
                     ? '<span class="badge badge-danger bg-danger text-white">'   + esc(strs.suspended) + '</span>'
                     : '<span class="badge badge-success bg-success text-white">' + esc(strs.active)    + '</span>';
 
+                // Si Zoom está disponible, añadir cabecera una sola vez.
+                if (data.zoomavail) addZoomHeader();
+
                 data.rows.forEach(function(row) {
                     var detailParams = 'mode=individual'
                         + '&userid='   + data.userid
@@ -857,6 +925,11 @@ if ($searched) {
                         + '&mintime='  + mintime
                         + '&maxtime='  + maxtime;
                     var detailUrl = wwwroot + '/local/audit/index.php?' + detailParams;
+
+                    var zoomCell = '';
+                    if (data.zoomavail) {
+                        zoomCell = '<td>' + (row.zoomfmt ? '<strong>' + esc(row.zoomfmt) + '</strong>' : '—') + '</td>';
+                    }
 
                     var tr = document.createElement('tr');
                     tr.innerHTML =
@@ -867,7 +940,8 @@ if ($searched) {
                             '<br><small class="text-muted">' + esc(row.shortname) + '</small></td>' +
                         '<td><strong>' + esc(row.timeformatted) + '</strong></td>' +
                         '<td>' + row.sessioncount +
-                            ' <a href="' + detailUrl + '" class="btn btn-sm btn-outline-secondary ml-1">' + esc(strs.viewsessions) + '</a></td>';
+                            ' <a href="' + detailUrl + '" class="btn btn-sm btn-outline-secondary ml-1">' + esc(strs.viewsessions) + '</a></td>' +
+                        zoomCell;
                     tbody.appendChild(tr);
                 });
             });
@@ -876,8 +950,9 @@ if ($searched) {
     Promise.all(userids.map(loadUser)).then(function() {
         loading.remove();
         if (tbody.children.length === 0) {
+            var colspan = zoomColAdded ? 7 : 6;
             var tr = document.createElement('tr');
-            tr.innerHTML = '<td colspan="6" class="text-center text-muted">' + esc(strs.noresults) + '</td>';
+            tr.innerHTML = '<td colspan="' + colspan + '" class="text-center text-muted">' + esc(strs.noresults) + '</td>';
             tbody.appendChild(tr);
         }
     });

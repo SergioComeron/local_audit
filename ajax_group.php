@@ -28,19 +28,32 @@ if (!$user) {
 
 $dedication = local_audit_get_dedication($userid, $courseid, $mintime, $maxtime);
 
+$zoomavail = local_audit_zoom_available();
+
 $rows = [];
 foreach ($dedication as $d) {
     if (empty($d->sessions)) {
         continue;
     }
-    $rows[] = [
+
+    $row = [
         'courseid'      => (int)$d->courseid,
         'coursename'    => $d->coursename,
         'shortname'     => $d->shortname,
         'timesecs'      => (int)$d->timesecs,
         'timeformatted' => $d->timeformatted,
         'sessioncount'  => count($d->sessions),
+        'zoomtime'      => null,   // null = Zoom no disponible o no consultado
     ];
+
+    // Zoom solo tiene sentido con curso concreto (una llamada a la API por fila).
+    if ($zoomavail && $d->courseid > 0) {
+        $zsessions        = local_audit_get_zoom_sessions($userid, (int)$d->courseid, $mintime, $maxtime);
+        $row['zoomtime']  = local_audit_zoom_total_secs($zsessions);
+        $row['zoomfmt']   = $row['zoomtime'] > 0 ? local_audit_format_secs($row['zoomtime']) : null;
+    }
+
+    $rows[] = $row;
 }
 
 echo json_encode([
@@ -48,5 +61,6 @@ echo json_encode([
     'fullname'  => fullname($user),
     'username'  => $user->username,
     'suspended' => (bool)$user->suspended,
+    'zoomavail' => $zoomavail,
     'rows'      => $rows,
 ]);

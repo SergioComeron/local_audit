@@ -367,6 +367,78 @@ function local_audit_get_forum_posts(int $userid, int $courseid): array {
     return $DB->get_records_sql($sql, $params);
 }
 
+// ── Zoom ──────────────────────────────────────────────────────────────────
+
+/**
+ * Comprueba si el plugin block_zoom_udima está instalado y disponible.
+ *
+ * @return bool
+ */
+function local_audit_zoom_available(): bool {
+    return class_exists('\block_zoom_udima\external\get_student_sessions');
+}
+
+/**
+ * Devuelve las sesiones Zoom de un usuario en un curso concreto.
+ *
+ * Requiere $courseid > 0. El $USER activo debe ser el profesor/admin
+ * que ejecuta el informe (la función autentica con la API Zoom con él).
+ *
+ * @param int $userid
+ * @param int $courseid  Obligatorio > 0.
+ * @param int $mintime   Timestamp inicio (0 = sin límite).
+ * @param int $maxtime   Timestamp fin   (0 = sin límite).
+ * @return array  Array de sesiones con la estructura de block_zoom_udima.
+ */
+function local_audit_get_zoom_sessions(int $userid, int $courseid, int $mintime = 0, int $maxtime = 0): array {
+    if (!local_audit_zoom_available() || $courseid <= 0) {
+        return [];
+    }
+    try {
+        $result = \block_zoom_udima\external\get_student_sessions::execute(
+            $courseid,
+            $userid,
+            $mintime ?: 0,
+            $maxtime ?: 0
+        );
+        return $result['sessions'] ?? [];
+    } catch (\Exception $e) {
+        return [];
+    }
+}
+
+/**
+ * Calcula el total de segundos Zoom: tiempo en directo + grabaciones vistas.
+ *
+ * @param array $zoom_sessions  Resultado de local_audit_get_zoom_sessions().
+ * @return int
+ */
+function local_audit_zoom_total_secs(array $zoom_sessions): int {
+    $total = 0;
+    foreach ($zoom_sessions as $s) {
+        $total += $s['tiempoSesion'] ?? 0;
+        foreach ($s['grabaciones'] ?? [] as $g) {
+            $total += $g['tiempoVisto'] ?? 0;
+        }
+    }
+    return $total;
+}
+
+/**
+ * Formatea segundos como H h M min (reutiliza format_dedication si está disponible).
+ *
+ * @param int $secs
+ * @return string
+ */
+function local_audit_format_secs(int $secs): string {
+    if (local_audit_dedication_available()) {
+        return \block_dedication\lib\utils::format_dedication($secs);
+    }
+    $h = intdiv($secs, 3600);
+    $m = intdiv($secs % 3600, 60);
+    return ($h ? "{$h}h " : '') . "{$m}min";
+}
+
 /**
  * Devuelve todos los tiempos de dedicación de un conjunto de usuarios,
  * opcionalmente filtrados por curso y rango de fechas.
