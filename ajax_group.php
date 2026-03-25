@@ -30,6 +30,9 @@ $dedication = local_audit_get_dedication($userid, $courseid, $mintime, $maxtime)
 
 $rows = [];
 foreach ($dedication as $d) {
+    if (empty($d->sessions)) {
+        continue;
+    }
     $rows[] = [
         'courseid'      => (int)$d->courseid,
         'coursename'    => $d->coursename,
