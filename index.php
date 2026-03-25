@@ -770,60 +770,120 @@ if ($searched) {
             get_string('noselection', 'local_audit'),
         ]);
 
-        // Tabla de resultados.
+        // Tabla de resultados cargada por AJAX (una petición por usuario en paralelo).
         if (!empty($groupuserids)) {
-            $grouprows = local_audit_get_group_dedication($groupuserids, $courseid, $mintime, $maxtime);
+            $ajaxurl  = (new moodle_url('/local/audit/ajax_group.php'))->out(false);
+            $wwwroot  = $CFG->wwwroot;
+            $sesskey  = sesskey();
 
-            if (empty($grouprows)) {
-                echo $OUTPUT->notification(get_string('noresults', 'local_audit'), 'warning');
-            } else {
-                $gtable = new flexible_table('local-audit-group-' . md5($groupuserids_str));
-                $gtable->define_columns(['student', 'username', 'userstatus', 'course', 'totaltime', 'sessions']);
-                $gtable->define_headers([
-                    get_string('student',    'local_audit'),
-                    get_string('username',   'local_audit'),
-                    get_string('userstatus', 'local_audit'),
-                    get_string('course',     'local_audit'),
-                    get_string('totaltime',  'local_audit'),
-                    get_string('sessions',   'local_audit'),
-                ]);
-                $gtable->define_baseurl(new moodle_url('/local/audit/index.php', $groupurlparams));
-                $gtable->pageable(true);
-                $gtable->is_downloadable(true);
-                $gtable->show_download_buttons_at([TABLE_P_BOTTOM]);
-                $gtable->set_attribute('class', 'generaltable table-sm');
-                $gtable->setup();
-                $gtable->pagesize(LOCAL_AUDIT_PERPAGE, count($grouprows));
+            // Cadenas traducidas que necesita el JS.
+            $jsstrs = json_encode([
+                'suspended'   => get_string('suspended',    'local_audit'),
+                'active'      => get_string('active',       'local_audit'),
+                'viewsessions'=> get_string('viewsessions', 'local_audit'),
+                'noresults'   => get_string('noresults',    'local_audit'),
+                'loading'     => get_string('loading',      'core'),
+            ]);
 
-                foreach ($grouprows as $r) {
-                    $userstatus = $r->suspended
-                        ? html_writer::tag('span', get_string('suspended', 'local_audit'), ['class' => 'badge badge-danger bg-danger text-white'])
-                        : html_writer::tag('span', get_string('active',    'local_audit'), ['class' => 'badge badge-success bg-success text-white']);
+            // Esqueleto de tabla — el cuerpo lo rellena JS.
+            echo html_writer::start_div('', ['id' => 'group-loading', 'class' => 'text-muted mb-2']);
+            echo html_writer::tag('span', '', ['class' => 'spinner-border spinner-border-sm mr-1']);
+            echo html_writer::tag('span', '', ['id' => 'group-progress']);
+            echo html_writer::end_div();
 
-                    $detailurl = new moodle_url('/local/audit/index.php', [
-                        'mode'     => 'individual',
-                        'userid'   => $r->userid,
-                        'courseid' => $r->courseid,
-                        'searched' => 1,
-                        'tab'      => 'time',
-                        'mintime'  => $mintime,
-                        'maxtime'  => $maxtime,
-                    ]);
-
-                    $gtable->add_data([
-                        html_writer::link(new moodle_url('/user/view.php', ['id' => $r->userid]), fullname($r)),
-                        s($r->username),
-                        $userstatus,
-                        html_writer::link(new moodle_url('/course/view.php', ['id' => $r->courseid]), s($r->coursename)) .
-                            html_writer::tag('br', html_writer::tag('small', s($r->shortname), ['class' => 'text-muted'])),
-                        html_writer::tag('strong', $r->timeformatted),
-                        $r->sessioncount . ' ' .
-                            html_writer::link($detailurl, get_string('viewsessions', 'local_audit'),
-                                ['class' => 'btn btn-sm btn-outline-secondary ml-1']),
-                    ]);
-                }
-                $gtable->finish_output();
+            echo html_writer::start_tag('table', ['class' => 'generaltable table-sm w-100']);
+            echo html_writer::start_tag('thead');
+            echo html_writer::start_tag('tr');
+            foreach (['student', 'username', 'userstatus', 'course', 'totaltime', 'sessions'] as $col) {
+                echo html_writer::tag('th', get_string($col, 'local_audit'));
             }
+            echo html_writer::end_tag('tr');
+            echo html_writer::end_tag('thead');
+            echo html_writer::start_tag('tbody', ['id' => 'group-tbody']);
+            echo html_writer::end_tag('tbody');
+            echo html_writer::end_tag('table');
+
+            // JS inline: carga cada usuario en paralelo y rellena la tabla.
+            $useridsJson = json_encode($groupuserids);
+            echo <<<HTML
+<script>
+(function() {
+    var userids   = {$useridsJson};
+    var courseid  = {$courseid};
+    var mintime   = {$mintime};
+    var maxtime   = {$maxtime};
+    var ajaxUrl   = '{$ajaxurl}';
+    var wwwroot   = '{$wwwroot}';
+    var sesskey   = '{$sesskey}';
+    var strs      = {$jsstrs};
+    var total     = userids.length;
+    var done      = 0;
+
+    var tbody    = document.getElementById('group-tbody');
+    var progress = document.getElementById('group-progress');
+    var loading  = document.getElementById('group-loading');
+
+    progress.textContent = '0 / ' + total;
+
+    function esc(str) {
+        return String(str)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function loadUser(userid) {
+        var params = 'userid=' + userid
+            + '&courseid=' + courseid
+            + '&mintime='  + mintime
+            + '&maxtime='  + maxtime
+            + '&sesskey='  + encodeURIComponent(sesskey);
+        return fetch(ajaxUrl + '?' + params)
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                done++;
+                progress.textContent = done + ' / ' + total;
+
+                if (data.error || !data.rows) return;
+
+                var badge = data.suspended
+                    ? '<span class="badge badge-danger bg-danger text-white">'   + esc(strs.suspended) + '</span>'
+                    : '<span class="badge badge-success bg-success text-white">' + esc(strs.active)    + '</span>';
+
+                data.rows.forEach(function(row) {
+                    var detailParams = 'mode=individual'
+                        + '&userid='   + data.userid
+                        + '&courseid=' + row.courseid
+                        + '&searched=1&tab=time'
+                        + '&mintime='  + mintime
+                        + '&maxtime='  + maxtime;
+                    var detailUrl = wwwroot + '/local/audit/index.php?' + detailParams;
+
+                    var tr = document.createElement('tr');
+                    tr.innerHTML =
+                        '<td><a href="' + wwwroot + '/user/view.php?id=' + data.userid + '">' + esc(data.fullname) + '</a></td>' +
+                        '<td>' + esc(data.username) + '</td>' +
+                        '<td>' + badge + '</td>' +
+                        '<td><a href="' + wwwroot + '/course/view.php?id=' + row.courseid + '">' + esc(row.coursename) + '</a>' +
+                            '<br><small class="text-muted">' + esc(row.shortname) + '</small></td>' +
+                        '<td><strong>' + esc(row.timeformatted) + '</strong></td>' +
+                        '<td>' + row.sessioncount +
+                            ' <a href="' + detailUrl + '" class="btn btn-sm btn-outline-secondary ml-1">' + esc(strs.viewsessions) + '</a></td>';
+                    tbody.appendChild(tr);
+                });
+            });
+    }
+
+    Promise.all(userids.map(loadUser)).then(function() {
+        loading.remove();
+        if (tbody.children.length === 0) {
+            var tr = document.createElement('tr');
+            tr.innerHTML = '<td colspan="6" class="text-center text-muted">' + esc(strs.noresults) + '</td>';
+            tbody.appendChild(tr);
+        }
+    });
+}());
+</script>
+HTML;
         }
     }
 }
