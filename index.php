@@ -13,6 +13,21 @@ require_once(__DIR__ . '/locallib.php');
 
 admin_externalpage_setup('local_audit');
 
+// ── POST del selector múltiple de usuarios del grupo → redirect GET ───────
+// Debe ejecutarse antes de los optional_param porque groupuserids llega como
+// array ($_POST['groupuserids'][]) y optional_param no admite arrays.
+if (!empty($_POST['groupuserids']) && is_array($_POST['groupuserids'])) {
+    $posted = array_values(array_filter(array_map('intval', $_POST['groupuserids'])));
+    redirect(new moodle_url('/local/audit/index.php', [
+        'mode'         => 'group',
+        'courseid'     => (int)($_POST['courseid'] ?? 0),
+        'searched'     => 1,
+        'groupuserids' => implode(',', $posted),
+        'mintime'      => (int)($_POST['mintime']  ?? 0),
+        'maxtime'      => (int)($_POST['maxtime']  ?? 0),
+    ]));
+}
+
 $mode     = optional_param('mode', 'individual', PARAM_ALPHA);
 $userid   = optional_param('userid',   0, PARAM_INT);
 $courseid = optional_param('courseid', 0, PARAM_INT);
@@ -26,20 +41,6 @@ $groupuserids_str = optional_param('groupuserids', '', PARAM_SEQUENCE);
 $groupuserids     = $groupuserids_str
     ? array_values(array_filter(array_map('intval', explode(',', $groupuserids_str))))
     : [];
-
-// ── POST del selector múltiple de usuarios del grupo → redirect GET ───────
-if (!empty($_POST['groupuserids'])) {
-    $posted       = array_values(array_filter(array_map('intval', (array)$_POST['groupuserids'])));
-    $redirect_url = new moodle_url('/local/audit/index.php', [
-        'mode'         => 'group',
-        'courseid'     => optional_param('courseid', 0, PARAM_INT),
-        'searched'     => 1,
-        'groupuserids' => implode(',', $posted),
-        'mintime'      => optional_param('mintime', 0, PARAM_INT),
-        'maxtime'      => optional_param('maxtime', 0, PARAM_INT),
-    ]);
-    redirect($redirect_url);
-}
 
 define('LOCAL_AUDIT_PERPAGE', 50);
 
