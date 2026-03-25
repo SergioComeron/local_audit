@@ -21,6 +21,7 @@ $page     = optional_param('page',     0, PARAM_INT);
 $mintime  = optional_param('mintime',  0, PARAM_INT);
 $maxtime  = optional_param('maxtime',  0, PARAM_INT);
 $download = optional_param('download', '', PARAM_ALPHA);
+$cohortid = optional_param('cohortid', 0, PARAM_INT);
 
 define('LOCAL_AUDIT_PERPAGE', 50);
 
@@ -190,6 +191,29 @@ if ($download && $tab === 'forum' && $searched && ($userid > 0 || $courseid > 0)
     $dl->finish_output();
 }
 
+// ── Descarga nativa del informe de grupo ─────────────────────────────────
+if ($download && $tab === 'group' && $searched && $cohortid > 0) {
+    $grouprows = local_audit_get_group_dedication($cohortid, $courseid, $mintime, $maxtime);
+    $dl = new flexible_table('local-audit-group-dl');
+    $dl->define_columns(['student','username','email','userstatus','course','shortname','totaltime','sessions']);
+    $dl->define_headers([
+        get_string('student',    'local_audit'), get_string('username',  'local_audit'),
+        get_string('email',      'local_audit'), get_string('userstatus','local_audit'),
+        get_string('course',     'local_audit'), get_string('shortname', 'local_audit'),
+        get_string('totaltime',  'local_audit'), get_string('sessions',  'local_audit'),
+    ]);
+    $dl->is_downloading($download, 'informe_grupo');
+    $dl->setup();
+    foreach ($grouprows as $r) {
+        $dl->add_data([
+            fullname($r), $r->username, '',
+            $r->suspended ? get_string('suspended','local_audit') : get_string('active','local_audit'),
+            $r->coursename, $r->shortname, $r->timeformatted, $r->sessioncount,
+        ]);
+    }
+    $dl->finish_output();
+}
+
 // ── Formulario de fechas (debe procesarse antes del header) ───────────────
 $dateform = new \local_audit\form\datefilter_form(new moodle_url('/local/audit/index.php'));
 $dateform->set_data([
@@ -325,7 +349,7 @@ if ($searched) {
 
         // Parámetros comunes para URLs.
         $urlparams = ['userid' => $userid, 'courseid' => $courseid, 'searched' => 1,
-                      'mintime' => $mintime, 'maxtime' => $maxtime];
+                      'mintime' => $mintime, 'maxtime' => $maxtime, 'cohortid' => $cohortid];
 
         // ── Pestañas ─────────────────────────────────────────────────────
         $tabs = [
@@ -348,6 +372,11 @@ if ($searched) {
                 'forum',
                 new moodle_url('/local/audit/index.php', $urlparams + ['tab' => 'forum']),
                 get_string('tabforum', 'local_audit') . ' (' . count($forumposts) . ')'
+            ),
+            new tabobject(
+                'group',
+                new moodle_url('/local/audit/index.php', $urlparams + ['tab' => 'group']),
+                get_string('tabgroup', 'local_audit')
             ),
         ];
         echo $OUTPUT->tabtree($tabs, $tab);
@@ -651,6 +680,87 @@ if ($searched) {
                     ]);
                 }
                 $table->finish_output();
+            }
+        }
+        // ── Pestaña Grupo ─────────────────────────────────────────────────
+        if ($tab === 'group') {
+            if (!local_audit_dedication_available()) {
+                echo $OUTPUT->notification(get_string('dedicationnotavailable', 'local_audit'), 'warning');
+            } else {
+                // Selector de cohorte.
+                $cohorts = $DB->get_records('cohort', null, 'name', 'id, name, idnumber');
+                if (empty($cohorts)) {
+                    echo $OUTPUT->notification(get_string('nocohorts', 'local_audit'), 'warning');
+                } else {
+                    $cohortoptions = [0 => get_string('selectcohort', 'local_audit')];
+                    foreach ($cohorts as $c) {
+                        $cohortoptions[$c->id] = $c->name . ($c->idnumber ? ' [' . $c->idnumber . ']' : '');
+                    }
+
+                    $groupformurl = new moodle_url('/local/audit/index.php',
+                        ['userid' => $userid, 'courseid' => $courseid, 'searched' => 1,
+                         'tab' => 'group', 'mintime' => $mintime, 'maxtime' => $maxtime]);
+                    echo html_writer::start_tag('form', ['method' => 'get', 'action' => $groupformurl->out(false), 'class' => 'd-flex align-items-center gap-2 mb-3 flex-wrap']);
+                    foreach (['userid' => $userid, 'courseid' => $courseid, 'searched' => 1, 'tab' => 'group', 'mintime' => $mintime, 'maxtime' => $maxtime] as $k => $v) {
+                        echo html_writer::empty_tag('input', ['type' => 'hidden', 'name' => $k, 'value' => $v]);
+                    }
+                    echo html_writer::tag('label', get_string('cohort', 'local_audit'), ['for' => 'cohortid', 'class' => 'mb-0 mr-2']);
+                    echo html_writer::select($cohortoptions, 'cohortid', $cohortid, false, ['id' => 'cohortid', 'class' => 'form-control mr-2', 'style' => 'width:auto']);
+                    echo html_writer::tag('button', get_string('search', 'local_audit'), ['type' => 'submit', 'class' => 'btn btn-primary btn-sm']);
+                    echo html_writer::end_tag('form');
+
+                    if ($cohortid > 0) {
+                        $grouprows = local_audit_get_group_dedication($cohortid, $courseid, $mintime, $maxtime);
+
+                        if (empty($grouprows)) {
+                            echo $OUTPUT->notification(get_string('noresults', 'local_audit'), 'warning');
+                        } else {
+                            $gtable = new flexible_table('local-audit-group-' . $cohortid);
+                            $gtable->define_columns(['student', 'username', 'userstatus', 'course', 'totaltime', 'sessions']);
+                            $gtable->define_headers([
+                                get_string('student',    'local_audit'),
+                                get_string('username',   'local_audit'),
+                                get_string('userstatus', 'local_audit'),
+                                get_string('course',     'local_audit'),
+                                get_string('totaltime',  'local_audit'),
+                                get_string('sessions',   'local_audit'),
+                            ]);
+                            $gtable->define_baseurl(new moodle_url('/local/audit/index.php',
+                                $urlparams + ['tab' => 'group']));
+                            $gtable->pageable(true);
+                            $gtable->is_downloadable(true);
+                            $gtable->show_download_buttons_at([TABLE_P_BOTTOM]);
+                            $gtable->set_attribute('class', 'generaltable table-sm');
+                            $gtable->setup();
+                            $gtable->pagesize(LOCAL_AUDIT_PERPAGE, count($grouprows));
+
+                            foreach ($grouprows as $r) {
+                                $userstatus = $r->suspended
+                                    ? html_writer::tag('span', get_string('suspended', 'local_audit'), ['class' => 'badge badge-danger bg-danger text-white'])
+                                    : html_writer::tag('span', get_string('active',    'local_audit'), ['class' => 'badge badge-success bg-success text-white']);
+
+                                $detailurl = new moodle_url('/local/audit/index.php', [
+                                    'userid' => $r->userid, 'courseid' => $r->courseid,
+                                    'searched' => 1, 'tab' => 'time',
+                                    'mintime' => $mintime, 'maxtime' => $maxtime,
+                                ]);
+
+                                $gtable->add_data([
+                                    html_writer::link(new moodle_url('/user/view.php', ['id' => $r->userid]), fullname($r)),
+                                    s($r->username),
+                                    $userstatus,
+                                    html_writer::link(new moodle_url('/course/view.php', ['id' => $r->courseid]), s($r->coursename)) .
+                                        html_writer::tag('br', html_writer::tag('small', s($r->shortname), ['class' => 'text-muted'])),
+                                    html_writer::tag('strong', $r->timeformatted),
+                                    $r->sessioncount . ' ' .
+                                        html_writer::link($detailurl, get_string('viewsessions', 'local_audit'),
+                                            ['class' => 'btn btn-sm btn-outline-secondary ml-1']),
+                                ]);
+                            }
+                            $gtable->finish_output();
+                        }
+                    }
+                }
             }
         }
     }

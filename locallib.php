@@ -366,3 +366,60 @@ function local_audit_get_forum_posts(int $userid, int $courseid): array {
 
     return $DB->get_records_sql($sql, $params);
 }
+
+/**
+ * Devuelve todos los tiempos de dedicación de los miembros de una cohorte,
+ * opcionalmente filtrados por curso y rango de fechas.
+ *
+ * @param int $cohortid  ID de la cohorte.
+ * @param int $courseid  0 = todos los cursos matriculados.
+ * @param int $mintime   Timestamp de inicio (0 = sin límite).
+ * @param int $maxtime   Timestamp de fin   (0 = sin límite).
+ * @return array  Fila por usuario×curso con userid, name fields, courseid, timesecs, etc.
+ */
+function local_audit_get_group_dedication(int $cohortid, int $courseid = 0, int $mintime = 0, int $maxtime = 0): array {
+    global $DB;
+
+    if (!local_audit_dedication_available()) {
+        return [];
+    }
+
+    $members = $DB->get_records_sql(
+        "SELECT u.id, u.firstname, u.lastname, u.firstnamephonetic, u.lastnamephonetic,
+                u.middlename, u.alternatename, u.username, u.suspended
+           FROM {cohort_members} cm
+           JOIN {user} u ON u.id = cm.userid AND u.deleted = 0
+          WHERE cm.cohortid = :cohortid
+       ORDER BY u.lastname, u.firstname",
+        ['cohortid' => $cohortid]
+    );
+
+    if (empty($members)) {
+        return [];
+    }
+
+    $result = [];
+    foreach ($members as $user) {
+        $dedication = local_audit_get_dedication($user->id, $courseid, $mintime, $maxtime);
+        foreach ($dedication as $d) {
+            $row                    = new stdClass();
+            $row->userid            = (int)$user->id;
+            $row->firstname         = $user->firstname;
+            $row->lastname          = $user->lastname;
+            $row->firstnamephonetic = $user->firstnamephonetic;
+            $row->lastnamephonetic  = $user->lastnamephonetic;
+            $row->middlename        = $user->middlename;
+            $row->alternatename     = $user->alternatename;
+            $row->username          = $user->username;
+            $row->suspended         = $user->suspended;
+            $row->courseid          = $d->courseid;
+            $row->coursename        = $d->coursename;
+            $row->shortname         = $d->shortname;
+            $row->timesecs          = $d->timesecs;
+            $row->timeformatted     = $d->timeformatted;
+            $row->sessioncount      = count($d->sessions);
+            $result[] = $row;
+        }
+    }
+    return $result;
+}
