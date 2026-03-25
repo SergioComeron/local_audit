@@ -368,30 +368,30 @@ function local_audit_get_forum_posts(int $userid, int $courseid): array {
 }
 
 /**
- * Devuelve todos los tiempos de dedicación de los miembros de una cohorte,
+ * Devuelve todos los tiempos de dedicación de un conjunto de usuarios,
  * opcionalmente filtrados por curso y rango de fechas.
  *
- * @param int $cohortid  ID de la cohorte.
- * @param int $courseid  0 = todos los cursos matriculados.
- * @param int $mintime   Timestamp de inicio (0 = sin límite).
- * @param int $maxtime   Timestamp de fin   (0 = sin límite).
+ * @param int[] $userids  Array de IDs de usuario.
+ * @param int   $courseid 0 = todos los cursos matriculados.
+ * @param int   $mintime  Timestamp de inicio (0 = sin límite).
+ * @param int   $maxtime  Timestamp de fin   (0 = sin límite).
  * @return array  Fila por usuario×curso con userid, name fields, courseid, timesecs, etc.
  */
-function local_audit_get_group_dedication(int $cohortid, int $courseid = 0, int $mintime = 0, int $maxtime = 0): array {
+function local_audit_get_group_dedication(array $userids, int $courseid = 0, int $mintime = 0, int $maxtime = 0): array {
     global $DB;
 
-    if (!local_audit_dedication_available()) {
+    if (!local_audit_dedication_available() || empty($userids)) {
         return [];
     }
 
+    [$insql, $inparams] = $DB->get_in_or_equal($userids);
     $members = $DB->get_records_sql(
         "SELECT u.id, u.firstname, u.lastname, u.firstnamephonetic, u.lastnamephonetic,
                 u.middlename, u.alternatename, u.username, u.suspended
-           FROM {cohort_members} cm
-           JOIN {user} u ON u.id = cm.userid AND u.deleted = 0
-          WHERE cm.cohortid = :cohortid
+           FROM {user} u
+          WHERE u.deleted = 0 AND u.id $insql
        ORDER BY u.lastname, u.firstname",
-        ['cohortid' => $cohortid]
+        $inparams
     );
 
     if (empty($members)) {
