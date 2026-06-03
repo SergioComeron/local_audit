@@ -1,7 +1,7 @@
 <?php
 defined('MOODLE_INTERNAL') || die();
 
-$string['pluginname']         = 'Auditoría de entregas';
+$string['pluginname']         = 'Auditoría';
 $string['filterheading']      = 'Filtros de búsqueda';
 $string['userid']             = 'ID de usuario';
 $string['userid_help']        = 'Identificador numérico del usuario (mdl_user.id). Dejar en blanco para no filtrar por usuario.';
@@ -26,6 +26,8 @@ $string['timemodified']       = 'Última modificación';
 $string['files']              = 'Ficheros';
 $string['download']           = 'Descargar';
 $string['nofiles']            = 'Sin ficheros';
+$string['feedbackfiles']      = 'Ficheros de corrección';
+$string['nofeedbackfiles']    = 'Sin correcciones';
 $string['statussubmitted']    = 'Entregado';
 $string['statusdraft']        = 'Borrador';
 $string['statusnew']          = 'Sin entrega';
@@ -83,4 +85,8 @@ $string['zoomsubject']         = 'Asignatura';
 $string['zoomteacher']         = 'Docente';
 $string['zoomlivetime']        = 'Tiempo directo';
 $string['zoomrecordingtime']   = 'Tiempo grabación';
+$string['day']                 = 'Día';
+$string['moodletime']          = 'Tiempo Moodle';
+$string['showzoom']            = 'Mostrar datos de Zoom';
+$string['showzoom_desc']       = 'Muestra los tiempos de sesiones Zoom (en directo y grabaciones) en la pestaña Tiempo. Requiere el plugin block_zoom_udima.';
 $string['privacy:metadata']   = 'El plugin Auditoría de entregas no almacena datos personales; únicamente accede en lectura a datos ya existentes en Moodle.';

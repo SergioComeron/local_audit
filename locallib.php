@@ -65,6 +65,50 @@ function local_audit_get_submissions(int $userid, int $courseid): array {
 }
 
 /**
+ * Devuelve los ficheros de corrección subidos por el profesor para un usuario
+ * en un assign concreto.
+ *
+ * Recorre TODAS las calificaciones (assign_grades) del usuario en ese assign,
+ * no solo la del intento actual, para no perder correcciones cuando hay
+ * intentos reabiertos y el profesor calificó en un attemptnumber distinto al
+ * de la entrega marcada como `latest`. Incluye dos orígenes:
+ *   - assignfeedback_file / feedback_files  → ficheros subidos manualmente.
+ *   - assignfeedback_editpdf / download     → PDF anotado generado por EditPDF.
+ * En ambos casos el itemid del fichero es el id del registro de calificación.
+ *
+ * @param int $contextid Context id del módulo (context_module).
+ * @param int $assignid  Id del assign (mdl_assign.id).
+ * @param int $userid    Id del usuario.
+ * @return stored_file[] Ficheros (sin directorios), indexados por id de fichero.
+ */
+function local_audit_get_feedback_files(int $contextid, int $assignid, int $userid): array {
+    global $DB;
+
+    $gradeids = $DB->get_fieldset_select('assign_grades', 'id',
+        'assignment = :assignid AND userid = :userid',
+        ['assignid' => $assignid, 'userid' => $userid]);
+    if (empty($gradeids)) {
+        return [];
+    }
+
+    $fs    = get_file_storage();
+    $areas = [
+        'assignfeedback_file'    => 'feedback_files',
+        'assignfeedback_editpdf' => 'download',
+    ];
+
+    $result = [];
+    foreach ($gradeids as $gradeid) {
+        foreach ($areas as $component => $filearea) {
+            foreach ($fs->get_area_files($contextid, $component, $filearea, $gradeid, 'filename', false) as $f) {
+                $result[$f->get_id()] = $f;
+            }
+        }
+    }
+    return $result;
+}
+
+/**
  * Devuelve una etiqueta HTML con el estado de una entrega.
  *
  * @param string|null $status Valor del campo mdl_assign_submission.status.
@@ -375,6 +419,9 @@ function local_audit_get_forum_posts(int $userid, int $courseid): array {
  * @return bool
  */
 function local_audit_zoom_available(): bool {
+    if (!get_config('local_audit', 'showzoom')) {
+        return false;
+    }
     return class_exists('\block_zoom_udima\external\get_student_sessions');
 }
 
@@ -402,7 +449,7 @@ function local_audit_get_zoom_sessions(int $userid, int $courseid, int $mintime 
             $maxtime ?: 0
         );
         return $result['sessions'] ?? [];
-    } catch (\Exception $e) {
+    } catch (\Throwable $e) {
         return [];
     }
 }
@@ -416,7 +463,8 @@ function local_audit_get_zoom_sessions(int $userid, int $courseid, int $mintime 
 function local_audit_zoom_total_secs(array $zoom_sessions): int {
     $total = 0;
     foreach ($zoom_sessions as $s) {
-        $total += $s['tiempoSesion'] ?? 0;
+        // tiempoSesion viene en minutos de la API; tiempoVisto en segundos.
+        $total += ((int)($s['tiempoSesion'] ?? 0)) * 60;
         foreach ($s['grabaciones'] ?? [] as $g) {
             $total += $g['tiempoVisto'] ?? 0;
         }

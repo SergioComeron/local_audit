@@ -52,31 +52,71 @@ if ($download && $tab === 'time' && $searched && $userid > 0 && local_audit_dedi
 
     if (!empty($dedication)) {
         if ($courseid > 0 && count($dedication) === 1) {
-            // Tabla de sesiones individuales.
-            $coursedata      = reset($dedication);
-            $defaultsort     = $tsort ?: 'sessionstart';
-            $sessions_sorted = array_values($coursedata->sessions);
-            usort($sessions_sorted, function($a, $b) use ($defaultsort, $tdir) {
-                $cmp = ($defaultsort === 'sessionduration')
-                    ? ($a->dedicationtime <=> $b->dedicationtime)
-                    : ($a->start_date <=> $b->start_date);
-                return ($tdir == SORT_ASC) ? $cmp : -$cmp;
-            });
+            // Tabla unificada por día: Moodle + Zoom.
+            // Seguro llamar a Zoom aquí — no hay output HTML todavía.
+            $coursedata = reset($dedication);
 
-            $dltable = new flexible_table('local-audit-sessions-' . $userid . '-' . $courseid);
-            $dltable->define_columns(['sessionstart', 'sessionduration']);
-            $dltable->define_headers([
-                get_string('sessionstart',    'local_audit'),
-                get_string('sessionduration', 'local_audit'),
-            ]);
-            $dltable->is_downloading($download, 'tiempos_sesiones');
-            $dltable->setup();
-            foreach ($sessions_sorted as $s) {
-                $dltable->add_data([
-                    userdate($s->start_date),
-                    \block_dedication\lib\utils::format_dedication($s->dedicationtime),
-                ]);
+            $moodleByDay = [];
+            foreach ($coursedata->sessions as $session) {
+                $day = date('Y-m-d', $session->start_date);
+                $moodleByDay[$day] = ($moodleByDay[$day] ?? 0) + (int)$session->dedicationtime;
             }
+
+            $zoomByDay = [];
+            if (local_audit_zoom_available()) {
+                foreach (local_audit_get_zoom_sessions($userid, $courseid, $mintime, $maxtime) as $zs) {
+                    if (empty($zs['fechaInicio'])) continue;
+                    $day = date('Y-m-d', $zs['fechaInicio']);
+                    if (!isset($zoomByDay[$day])) $zoomByDay[$day] = ['live' => 0, 'rec' => 0];
+                    $zoomByDay[$day]['live'] += (int)($zs['tiempoSesion'] ?? 0) * 60; // minutos → segundos
+                    foreach ($zs['grabaciones'] ?? [] as $g) {
+                        $zoomByDay[$day]['rec'] += (int)($g['tiempoVisto'] ?? 0);
+                    }
+                }
+            }
+
+            $hasZoom  = !empty($zoomByDay);
+            $allDays  = array_unique(array_merge(array_keys($moodleByDay), array_keys($zoomByDay)));
+            rsort($allDays);
+
+            $dlcols = ['day', 'moodletime'];
+            $dlhdrs = [get_string('day', 'local_audit'), get_string('moodletime', 'local_audit')];
+            if ($hasZoom) {
+                $dlcols[] = 'zoomlivetime';
+                $dlcols[] = 'zoomrecordingtime';
+                $dlhdrs[] = get_string('zoomlivetime',      'local_audit');
+                $dlhdrs[] = get_string('zoomrecordingtime', 'local_audit');
+            }
+
+            $dltable = new flexible_table('local-audit-unified-' . $userid . '-' . $courseid);
+            $dltable->define_columns($dlcols);
+            $dltable->define_headers($dlhdrs);
+            $dltable->is_downloading($download, 'tiempos_' . $courseid);
+            $dltable->setup();
+
+            $totM = $totL = $totR = 0;
+            foreach ($allDays as $day) {
+                $m = $moodleByDay[$day] ?? 0;
+                $l = $zoomByDay[$day]['live'] ?? 0;
+                $r = $zoomByDay[$day]['rec']  ?? 0;
+                $totM += $m; $totL += $l; $totR += $r;
+                $row = [
+                    date('d/m/Y', strtotime($day)),
+                    \block_dedication\lib\utils::format_dedication($m),
+                ];
+                if ($hasZoom) {
+                    $row[] = $l > 0 ? local_audit_format_secs($l) : '—';
+                    $row[] = $r > 0 ? local_audit_format_secs($r) : '—';
+                }
+                $dltable->add_data($row);
+            }
+            // Fila de totales.
+            $totalRow = [get_string('total', 'moodle'), \block_dedication\lib\utils::format_dedication($totM)];
+            if ($hasZoom) {
+                $totalRow[] = $totL > 0 ? local_audit_format_secs($totL) : '—';
+                $totalRow[] = $totR > 0 ? local_audit_format_secs($totR) : '—';
+            }
+            $dltable->add_data($totalRow);
             $dltable->finish_output();
         } else {
             // Tabla resumen por curso.
@@ -119,14 +159,14 @@ if ($download && $tab === 'assign' && $searched && ($userid > 0 || $courseid > 0
     $fs  = get_file_storage();
     $dl  = new flexible_table('local-audit-assign-dl');
     $dl->define_columns(['student','username','email','userstatus','course','coursecode',
-                         'assignment','submissionstatus','timecreated','timemodified','files']);
+                         'assignment','submissionstatus','timecreated','timemodified','files','feedbackfiles']);
     $dl->define_headers([
         get_string('student','local_audit'), get_string('username','local_audit'),
         get_string('email','local_audit'),   get_string('userstatus','local_audit'),
         get_string('course','local_audit'),  get_string('shortname','local_audit'),
         get_string('assignment','local_audit'), get_string('submissionstatus','local_audit'),
         get_string('timecreated','local_audit'), get_string('timemodified','local_audit'),
-        get_string('files','local_audit'),
+        get_string('files','local_audit'), get_string('feedbackfiles','local_audit'),
     ]);
     $dl->is_downloading($download, 'entregas');
     $dl->setup();
@@ -138,6 +178,10 @@ if ($download && $tab === 'assign' && $searched && ($userid > 0 || $courseid > 0
         foreach ($files as $f) {
             $fileparts[] = $f->get_filename() . ' (' . display_size($f->get_filesize()) . ')';
         }
+        $feedbackparts = [];
+        foreach (local_audit_get_feedback_files($context->id, $sub->assignid, $sub->userid) as $f) {
+            $feedbackparts[] = $f->get_filename() . ' (' . display_size($f->get_filesize()) . ')';
+        }
         $dl->add_data([
             fullname($sub), $sub->username, $sub->email,
             $sub->suspended ? get_string('suspended','local_audit') : get_string('active','local_audit'),
@@ -146,6 +190,7 @@ if ($download && $tab === 'assign' && $searched && ($userid > 0 || $courseid > 0
             $sub->timecreated  ? userdate($sub->timecreated)  : '',
             $sub->timemodified ? userdate($sub->timemodified) : '',
             implode('; ', $fileparts),
+            implode('; ', $feedbackparts),
         ]);
     }
     $dl->finish_output();
@@ -424,7 +469,7 @@ if ($searched) {
                 $fs    = get_file_storage();
                 $table = new flexible_table('local-audit-assign-' . $userid . '-' . $courseid);
                 $table->define_columns(['student','username','email','userstatus','course',
-                                        'assignment','submissionstatus','timecreated','timemodified','files']);
+                                        'assignment','submissionstatus','timecreated','timemodified','files','feedbackfiles']);
                 $table->define_headers([
                     get_string('student',          'local_audit'),
                     get_string('username',         'local_audit'),
@@ -436,6 +481,7 @@ if ($searched) {
                     get_string('timecreated',      'local_audit'),
                     get_string('timemodified',     'local_audit'),
                     get_string('files',            'local_audit'),
+                    get_string('feedbackfiles',    'local_audit'),
                 ]);
                 $table->define_baseurl(new moodle_url('/local/audit/index.php', $urlparams + ['tab' => 'assign']));
                 $table->pageable(true);
@@ -471,6 +517,26 @@ if ($searched) {
                             ['class' => 'list-unstyled mb-0', 'style' => 'min-width:220px']);
                     }
 
+                    // Ficheros de corrección del profesor: ficheros subidos (assignfeedback_file)
+                    // y/o PDF anotado de EditPDF, recogidos de todas las calificaciones del usuario.
+                    $feedbackcell  = get_string('nofeedbackfiles', 'local_audit');
+                    $feedbackfiles = local_audit_get_feedback_files($context->id, $sub->assignid, $sub->userid);
+                    if (!empty($feedbackfiles)) {
+                        $fblist = [];
+                        foreach ($feedbackfiles as $file) {
+                            $dlurl  = new moodle_url('/local/audit/download.php', ['fileid' => $file->get_id()]);
+                            $label  = html_writer::tag('strong', $file->get_filename());
+                            $meta   = html_writer::tag('small',
+                                ' (' . display_size($file->get_filesize()) . ', ' . $file->get_mimetype() . ')',
+                                ['class' => 'text-muted']);
+                            $dllink = html_writer::link($dlurl, get_string('download', 'local_audit'),
+                                ['class' => 'btn btn-sm btn-outline-success ml-1']);
+                            $fblist[] = html_writer::tag('li', $label . $meta . $dllink, ['class' => 'mb-1']);
+                        }
+                        $feedbackcell = html_writer::tag('ul', implode('', $fblist),
+                            ['class' => 'list-unstyled mb-0', 'style' => 'min-width:220px']);
+                    }
+
                     $table->add_data([
                         html_writer::link(new moodle_url('/user/view.php',       ['id' => $sub->userid]),   fullname($sub)),
                         s($sub->username),
@@ -483,6 +549,7 @@ if ($searched) {
                         $sub->timecreated  ? userdate($sub->timecreated)  : '—',
                         $sub->timemodified ? userdate($sub->timemodified) : '—',
                         $filecell,
+                        $feedbackcell,
                     ]);
                 }
                 $table->finish_output();
@@ -571,94 +638,153 @@ if ($searched) {
                     if ($courseid > 0 && count($dedication) === 1) {
                         $coursedata = reset($dedication);
 
-                        echo html_writer::tag('h5',
-                            get_string('totaltime', 'local_audit') . ': ' .
-                            html_writer::tag('strong', $coursedata->timeformatted)
-                        );
-
-                        if (!empty($coursedata->sessions)) {
-                            $defaultsort = $tsort ?: 'sessionstart';
-                            $sessions_sorted = array_values($coursedata->sessions);
-                            usort($sessions_sorted, function($a, $b) use ($defaultsort, $tdir) {
-                                $cmp = ($defaultsort === 'sessionduration')
-                                    ? ($a->dedicationtime <=> $b->dedicationtime)
-                                    : ($a->start_date <=> $b->start_date);
-                                return ($tdir == SORT_ASC) ? $cmp : -$cmp;
-                            });
-
-                            $stable = new flexible_table('local-audit-sessions-' . $userid . '-' . $courseid);
-                            $stable->define_columns(['sessionstart', 'sessionduration']);
-                            $stable->define_headers([
-                                get_string('sessionstart',    'local_audit'),
-                                get_string('sessionduration', 'local_audit'),
-                            ]);
-                            $stable->define_baseurl(new moodle_url('/local/audit/index.php',
-                                $urlparams + ['tab' => 'time', 'courseid' => $courseid]));
-                            $stable->sortable(true, 'sessionstart', SORT_DESC);
-                            $stable->pageable(true);
-                            $stable->is_downloadable(true);
-                            $stable->show_download_buttons_at([TABLE_P_BOTTOM]);
-                            $stable->set_attribute('class', 'generaltable table-sm');
-                            $stable->setup();
-                            $stable->pagesize(LOCAL_AUDIT_PERPAGE, count($sessions_sorted));
-
-                            foreach ($sessions_sorted as $session) {
-                                $stable->add_data([
-                                    userdate($session->start_date),
-                                    \block_dedication\lib\utils::format_dedication($session->dedicationtime),
-                                ]);
+                        // ── Tabla unificada por día: Moodle + Zoom ────────────────────
+                        // Agrupa las sesiones Moodle por día para combinarlas con Zoom.
+                        $moodleByDay = [];
+                        foreach ($coursedata->sessions as $session) {
+                            $day = date('Y-m-d', $session->start_date);
+                            if (!isset($moodleByDay[$day])) {
+                                $moodleByDay[$day] = 0;
                             }
-                            $stable->finish_output();
+                            $moodleByDay[$day] += (int)$session->dedicationtime;
                         }
 
-                        // ── Sesiones Zoom (solo cuando hay un curso concreto) ─────
-                        if (local_audit_zoom_available()) {
-                            $zoom_sessions = local_audit_get_zoom_sessions($userid, $courseid, $mintime, $maxtime);
-                            if (!empty($zoom_sessions)) {
-                                echo html_writer::tag('h5',
-                                    get_string('zoomsessions', 'local_audit'),
-                                    ['class' => 'mt-4']);
+                        $unifiedStrs = json_encode([
+                            'day'               => get_string('day',               'local_audit'),
+                            'moodletime'        => get_string('moodletime',        'local_audit'),
+                            'zoomlivetime'      => get_string('zoomlivetime',      'local_audit'),
+                            'zoomrecordingtime' => get_string('zoomrecordingtime', 'local_audit'),
+                            'totaltime'         => get_string('totaltime',         'local_audit'),
+                            'total'             => get_string('total',             'moodle'),
+                            'noresults'         => get_string('noresults',         'local_audit'),
+                            'loading'           => get_string('loading',           'core'),
+                        ]);
+                        $moodleJson  = json_encode($moodleByDay);
+                        $zoomAvailJs = local_audit_zoom_available() ? 'true' : 'false';
+                        $zoomAjaxUrl = (new moodle_url('/local/audit/ajax_zoom.php'))->out(false);
+                        $zoomSesskey = sesskey();
 
-                                $ztable = new flexible_table('local-audit-zoom-' . $userid . '-' . $courseid);
-                                $ztable->define_columns(['zoomsubject', 'zoomteacher', 'sessionstart',
-                                                         'zoomattended', 'zoomlivetime', 'zoomrecordingtime']);
-                                $ztable->define_headers([
-                                    get_string('zoomsubject',       'local_audit'),
-                                    get_string('zoomteacher',       'local_audit'),
-                                    get_string('sessionstart',      'local_audit'),
-                                    get_string('zoomlive',          'local_audit'),
-                                    get_string('zoomlivetime',      'local_audit'),
-                                    get_string('zoomrecordingtime', 'local_audit'),
-                                ]);
-                                $ztable->define_baseurl(new moodle_url('/local/audit/index.php',
-                                    $urlparams + ['tab' => 'time', 'courseid' => $courseid]));
-                                $ztable->set_attribute('class', 'generaltable table-sm');
-                                $ztable->setup();
-
-                                foreach ($zoom_sessions as $zs) {
-                                    $attended = !empty($zs['asistioSesion'])
-                                        ? html_writer::tag('span', get_string('zoomattended',    'local_audit'),
-                                            ['class' => 'badge badge-success bg-success text-white'])
-                                        : html_writer::tag('span', get_string('zoomnotattended', 'local_audit'),
-                                            ['class' => 'badge badge-secondary bg-secondary text-white']);
-
-                                    $rectime = 0;
-                                    foreach ($zs['grabaciones'] ?? [] as $g) {
-                                        $rectime += $g['tiempoVisto'] ?? 0;
-                                    }
-
-                                    $ztable->add_data([
-                                        s($zs['asignatura'] ?? ''),
-                                        s($zs['docente']    ?? ''),
-                                        !empty($zs['fechaInicio']) ? userdate($zs['fechaInicio']) : '—',
-                                        $attended,
-                                        local_audit_format_secs((int)($zs['tiempoSesion'] ?? 0)),
-                                        $rectime > 0 ? local_audit_format_secs($rectime) : '—',
-                                    ]);
-                                }
-                                $ztable->finish_output();
-                            }
+                        // Botones de descarga nativa de Moodle.
+                        $dlBase = new moodle_url('/local/audit/index.php',
+                            $urlparams + ['tab' => 'time', 'courseid' => $courseid, 'searched' => 1]);
+                        echo html_writer::start_div('mt-2 mb-1');
+                        foreach (['csv' => 'CSV', 'excel' => 'Excel', 'ods' => 'ODS'] as $fmt => $label) {
+                            $dlBase->param('download', $fmt);
+                            echo html_writer::link($dlBase,
+                                $OUTPUT->pix_icon('t/download', '') . ' ' . $label,
+                                ['class' => 'btn btn-sm btn-outline-secondary mr-1']);
                         }
+                        echo html_writer::end_div();
+
+                        echo <<<HTML
+<div id="unified-table-wrap" class="mt-3">
+  <span class="spinner-border spinner-border-sm mr-1"></span>
+  <span class="text-muted" id="unified-loading-text"></span>
+</div>
+<script>
+(function() {
+    var strs      = {$unifiedStrs};
+    var moodle    = {$moodleJson};   // {day: secs, ...}
+    var zoomAvail = {$zoomAvailJs};
+    var wrap      = document.getElementById('unified-table-wrap');
+
+    // Formatea segundos → "Xh Ymin" / "Ymin" / "—"
+    function fmt(s) {
+        if (!s) return '—';
+        var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+        return (h > 0 ? h + 'h ' : '') + m + 'min';
+    }
+    function esc(s) {
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function render(zoomSessions) {
+        // Acumula Zoom por día
+        var zoom = {};
+        (zoomSessions || []).forEach(function(zs) {
+            if (!zs.fechaInicio) return;
+            var d   = new Date(zs.fechaInicio * 1000);
+            var day = d.getFullYear() + '-'
+                + String(d.getMonth()+1).padStart(2,'0') + '-'
+                + String(d.getDate()).padStart(2,'0');
+            if (!zoom[day]) zoom[day] = {live: 0, rec: 0};
+            zoom[day].live += (zs.tiempoSesion || 0) * 60; // API devuelve minutos, fmt() espera segundos
+            (zs.grabaciones || []).forEach(function(g) {
+                zoom[day].rec += g.tiempoVisto || 0;
+            });
+        });
+
+        // Combina todos los días
+        var allDays = Object.keys(moodle).concat(Object.keys(zoom))
+            .filter(function(v, i, a) { return a.indexOf(v) === i; })
+            .sort().reverse();
+
+        if (allDays.length === 0) {
+            wrap.innerHTML = '<p class="text-muted">' + esc(strs.noresults) + '</p>';
+            return;
+        }
+
+        var hasZoom = Object.keys(zoom).length > 0;
+        var totMoodle = 0, totLive = 0, totRec = 0;
+
+        var cols = '<th>' + esc(strs.day) + '</th>'
+                 + '<th>' + esc(strs.moodletime) + '</th>';
+        if (hasZoom) {
+            cols += '<th>' + esc(strs.zoomlivetime) + '</th>'
+                  + '<th>' + esc(strs.zoomrecordingtime) + '</th>';
+        }
+
+        var rows = '';
+        allDays.forEach(function(day) {
+            var m = moodle[day] || 0;
+            var l = hasZoom ? (zoom[day] ? zoom[day].live : 0) : 0;
+            var r = hasZoom ? (zoom[day] ? zoom[day].rec  : 0) : 0;
+            totMoodle += m; totLive += l; totRec += r;
+
+            // Formato de fecha legible
+            var parts = day.split('-');
+            var dateStr = parts[2] + '/' + parts[1] + '/' + parts[0];
+
+            rows += '<tr>'
+                + '<td>' + dateStr + '</td>'
+                + '<td>' + fmt(m) + '</td>';
+            if (hasZoom) {
+                rows += '<td>' + fmt(l) + '</td>'
+                      + '<td>' + fmt(r) + '</td>';
+            }
+            rows += '</tr>';
+        });
+
+        // Fila de totales
+        var totalRow = '<tr class="font-weight-bold" style="border-top:2px solid #dee2e6">'
+            + '<td><strong>' + esc(strs.total) + '</strong></td>'
+            + '<td><strong>' + fmt(totMoodle) + '</strong></td>';
+        if (hasZoom) {
+            totalRow += '<td><strong>' + fmt(totLive) + '</strong></td>'
+                      + '<td><strong>' + fmt(totRec)  + '</strong></td>';
+        }
+        totalRow += '</tr>';
+
+        wrap.innerHTML = '<table class="generaltable table table-sm">'
+            + '<thead><tr>' + cols + '</tr></thead>'
+            + '<tbody>' + rows + totalRow + '</tbody>'
+            + '</table>';
+    }
+
+    if (!zoomAvail) {
+        render([]);
+    } else {
+        document.getElementById('unified-loading-text').textContent = strs.loading;
+        var url = '{$zoomAjaxUrl}?userid={$userid}&courseid={$courseid}'
+                + '&mintime={$mintime}&maxtime={$maxtime}&sesskey={$zoomSesskey}';
+        fetch(url)
+            .then(function(r) { return r.json(); })
+            .then(function(data) { render(data.sessions || []); })
+            .catch(function() { render([]); });
+    }
+}());
+</script>
+HTML;
                     } else {
                         // Vista resumen: un curso por fila.
                         $defaultsort = $tsort ?: 'totaltime';

@@ -1,7 +1,7 @@
 <?php
 defined('MOODLE_INTERNAL') || die();
 
-$string['pluginname']         = 'Submission Audit';
+$string['pluginname']         = 'Audit';
 $string['filterheading']      = 'Search filters';
 $string['userid']             = 'User ID';
 $string['userid_help']        = 'Numeric ID of the user (mdl_user.id). Leave blank to ignore.';
@@ -26,6 +26,8 @@ $string['timemodified']       = 'Last modified';
 $string['files']              = 'Files';
 $string['download']           = 'Download';
 $string['nofiles']            = 'No files';
+$string['feedbackfiles']      = 'Feedback files';
+$string['nofeedbackfiles']    = 'No feedback files';
 $string['statussubmitted']    = 'Submitted';
 $string['statusdraft']        = 'Draft';
 $string['statusnew']          = 'Not submitted';
@@ -83,4 +85,8 @@ $string['zoomsubject']         = 'Subject';
 $string['zoomteacher']         = 'Teacher';
 $string['zoomlivetime']        = 'Live time';
 $string['zoomrecordingtime']   = 'Recording time';
+$string['day']                 = 'Day';
+$string['moodletime']          = 'Moodle time';
+$string['showzoom']            = 'Show Zoom data';
+$string['showzoom_desc']       = 'Displays Zoom session times (live and recordings) in the Time tab. Requires the block_zoom_udima plugin.';
 $string['privacy:metadata']   = 'The Submission Audit plugin does not store any personal data; it only reads existing Moodle data.';
